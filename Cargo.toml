@@ -1,0 +1,8 @@
+[package]
+name = "win-gnome"
+version = "0.1.0"
+authors = ["x0a <x0a.cake@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+winapi = { version = "0.3.7", features = ["winuser", "libloaderapi", "windowsx"] }
