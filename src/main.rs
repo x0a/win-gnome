@@ -1,6 +1,5 @@
-//#![windows_subsystem = "windows"]
+#![windows_subsystem = "windows"]
 use std::ffi::CString;
-use std::{thread, time};
 
 use std::ffi::OsStr;
 use std::io::Error;
@@ -18,13 +17,13 @@ extern crate winapi;
 use self::winapi::shared::minwindef::{LPARAM, LRESULT, WPARAM};
 use self::winapi::um::libloaderapi::GetModuleHandleW;
 use self::winapi::um::winuser::{
-    keybd_event, CreateWindowExW, DefWindowProcW, DispatchMessageW, FindWindowW, GetClassNameA,
-    GetDesktopWindow, GetForegroundWindow, GetMessageW, GetWindowRect, RegisterClassW,
-    RegisterHotKey, ShowWindow, TranslateMessage,
+    keybd_event, CreateWindowExW, DefWindowProcW, DispatchMessageW, FindWindowExW, FindWindowW,
+    GetClassNameA, GetDesktopWindow, GetForegroundWindow, GetMessageW, GetWindowRect,
+    RegisterClassW, RegisterHotKey, ShowWindow, TranslateMessage,
 };
 use self::winapi::um::winuser::{
     CS_HREDRAW, CS_OWNDC, CS_VREDRAW, CW_USEDEFAULT, KEYEVENTF_KEYUP, MOD_WIN, MSG, SW_HIDE,
-    SW_SHOW, VK_ESCAPE, VK_LWIN, WM_HOTKEY, WNDCLASSW, WM_MOUSEMOVE
+    SW_SHOW, VK_ESCAPE, VK_LWIN, WM_HOTKEY, WM_MOUSEMOVE, WNDCLASSW,
 };
 use winapi::shared::windef::{HWND, RECT};
 
@@ -96,7 +95,7 @@ fn create_window(name: &str, title: &str) -> Result<Window, Error> {
 #[cfg(windows)]
 // Create message handling function with which to link to hook window to Windows messaging system
 // More info: https://msdn.microsoft.com/en-us/library/windows/desktop/ms644927(v=vs.85).aspx
-fn handle_message(window: &mut Window) -> bool {
+fn handle_message(window: &mut Window, on_hot_key: impl Fn() -> ()) -> bool {
     unsafe {
         let mut message: MSG = mem::uninitialized();
 
@@ -105,11 +104,7 @@ fn handle_message(window: &mut Window) -> bool {
             TranslateMessage(&message as *const MSG); // Translate message into something meaningful with TranslateMessage
             DispatchMessageW(&message as *const MSG); // Dispatch message with DispatchMessageW
             if message.message == WM_HOTKEY {
-                if !desktop.toggle() {
-                    desktop.tray.show();
-                } else {
-                    desktop.tray.hide();
-                }
+                on_hot_key();
             }
             return true;
         } else {
@@ -120,32 +115,25 @@ fn handle_message(window: &mut Window) -> bool {
 
 struct Tray {
     tray_height: i32,
-    start_width: i32,
     tray_handle: HWND,
-    button_handle: HWND,
     start_menu: HWND,
     icon_overflow: HWND,
     showing: bool,
 }
 impl Tray {
     fn new() -> Tray {
-        let button_class = win32_string("Button");
         let tray_class = win32_string("Shell_TrayWnd");
         let start_menu_class = win32_string("Windows.UI.Core.CoreWindow");
         let overflow_class = win32_string("NotifyIconOverflowWindow");
         unsafe {
-            let button_handle = FindWindowW(button_class.as_ptr(), null_mut());
             let tray_handle = FindWindowW(tray_class.as_ptr(), null_mut());
             let start_menu = FindWindowW(start_menu_class.as_ptr(), null_mut());
             let icon_overflow = FindWindowW(overflow_class.as_ptr(), null_mut());
             let (_, tray_height) = Desktop::get_window_dimensions(tray_handle);
-            let (_, start_width) = Desktop::get_window_dimensions(start_menu);
             return Tray {
                 start_menu,
-                button_handle,
                 tray_handle,
                 tray_height,
-                start_width,
                 icon_overflow,
                 showing: true,
             };
@@ -154,7 +142,6 @@ impl Tray {
 
     fn hide(&mut self) {
         unsafe {
-            ShowWindow(self.button_handle, SW_HIDE);
             ShowWindow(self.tray_handle, SW_HIDE);
             self.showing = false;
         }
@@ -162,25 +149,11 @@ impl Tray {
 
     fn show(&mut self) {
         unsafe {
-            ShowWindow(self.button_handle, SW_SHOW);
             ShowWindow(self.tray_handle, SW_SHOW);
             self.showing = true;
         }
     }
-    unsafe fn open_start_menu(&self) {
-        keybd_event(VK_LWIN as u8, 0, 0, 0);
-        keybd_event(VK_LWIN as u8, 0, KEYEVENTF_KEYUP, 0)
-    }
-    unsafe fn is_menu_open(&self) -> bool {
-        let (_, b, _, _) = Desktop::get_window_pos(self.tray_handle);
-        return b == desktop.height;
-    }
-    fn should_hide(&self) -> bool {
-        unsafe {
-            let fg: HWND = GetForegroundWindow();
-            return fg != self.icon_overflow && fg != self.tray_handle && fg != self.start_menu;
-        }
-    }
+
 }
 
 struct Desktop {
@@ -192,9 +165,11 @@ struct Desktop {
 }
 impl Desktop {
     unsafe fn new() -> Desktop {
-        let (width, height) = Desktop::get_resolution();
+        let g_desktop = GetDesktopWindow();
+        let window = Desktop::get_actual_desktop(g_desktop);
+        let (width, height) = Desktop::get_window_dimensions(g_desktop);
         let tray = Tray::new();
-        let window = FindWindowW(win32_string("WorkerW").as_ptr(), null_mut());
+
         return Desktop {
             height,
             width,
@@ -208,15 +183,43 @@ impl Desktop {
         return self.enabled;
     }
     fn is_bottom_left(&self, x: i32, y: i32) -> bool {
-        return x < 45 && y > self.height - 35;
+        return x < 45 && y > self.height - self.tray.tray_height;
     }
 
     fn is_tray_region(&self, y: i32) -> bool {
         return y > self.height - self.tray.tray_height;
     }
 
-    pub unsafe fn get_resolution() -> (i32, i32) {
-        return Desktop::get_window_dimensions(GetDesktopWindow());
+    fn tray_focused(&self) -> bool {
+        unsafe {
+            let fg: HWND = GetForegroundWindow();
+            return fg == self.tray.icon_overflow
+                || fg == self.tray.tray_handle
+                || fg == self.tray.start_menu;
+        }
+    }
+    pub unsafe fn get_actual_desktop(g_desktop: HWND) -> HWND {
+        let sibling = FindWindowExW(
+            g_desktop,
+            null_mut(),
+            win32_string("OleDdeWndClass").as_ptr(),
+            null_mut(),
+        );
+        let window = FindWindowExW(
+            g_desktop,
+            sibling,
+            win32_string("WorkerW").as_ptr(),
+            null_mut(),
+        );
+        return window;
+    }
+    unsafe fn open_start_menu(&self) {
+        keybd_event(VK_LWIN as u8, 0, 0, 0);
+        keybd_event(VK_LWIN as u8, 0, KEYEVENTF_KEYUP, 0)
+    }
+    unsafe fn is_menu_open(&self) -> bool {
+        let (_, b, _, _) = Desktop::get_window_pos(self.tray.tray_handle);
+        return b == self.height;
     }
     unsafe fn debug_cur_window(&self) {
         let current = GetForegroundWindow();
@@ -226,10 +229,19 @@ impl Desktop {
 
         let sstr = CString::from_raw(class_name);
         let (w, h) = Desktop::get_window_dimensions(current);
-        println!("className: '{}' {}, {}x{}", sstr.to_str().unwrap(), out, w, h);
+        println!(
+            "className: '{}' {}, {}x{}",
+            sstr.to_str().unwrap(),
+            out,
+            w,
+            h
+        );
     }
     unsafe fn full_screen_program(&self) -> bool {
         let current = GetForegroundWindow();
+        if current == self.window {
+            return false;
+        };
         let (t, b, l, r) = Desktop::get_window_pos(current);
         return t == 0 && l == 0 && b == self.height && r == self.width;
     }
@@ -266,12 +278,10 @@ static mut desktop: Desktop = Desktop {
     enabled: true,
     window: null_mut(),
     tray: Tray {
-        button_handle: null_mut(),
         tray_handle: null_mut(),
         start_menu: null_mut(),
         icon_overflow: null_mut(),
         tray_height: 0,
-        start_width: 0,
         showing: false,
     },
 };
@@ -280,16 +290,15 @@ fn mouse_move(x: i32, y: i32) {
         if !desktop.enabled {
             return ();
         }
-        desktop.debug_cur_window();
+        //desktop.debug_cur_window();
         if !desktop.tray.showing {
             if desktop.is_bottom_left(x, y) && !desktop.full_screen_program() {
                 desktop.tray.showing = true;
-                desktop.tray.open_start_menu();
+                desktop.open_start_menu();
                 desktop.tray.show();
             }
         } else {
-            if desktop.is_tray_region(y) || desktop.tray.is_menu_open() {
-            } else {
+            if !desktop.is_tray_region(y) && !desktop.is_menu_open() {
                 desktop.tray.showing = false;
                 desktop.tray.hide();
             }
@@ -314,10 +323,18 @@ fn main() {
         RegisterHotKey(window.handle, 0, MOD_WIN as u32, VK_ESCAPE as u32);
     }
 
-    let _hm = mouse_hook().unwrap();
+    let hotkey_callback = || unsafe {
+        if !desktop.toggle() {
+            desktop.tray.show();
+        } else {
+            desktop.tray.hide();
+        }
+    };
+
+    let m_hook = mouse_hook().unwrap();
 
     loop {
-        if !handle_message(&mut window) {
+        if !handle_message(&mut window, &hotkey_callback) {
             break;
         }
     }
