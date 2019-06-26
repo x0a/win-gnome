@@ -6,6 +6,7 @@ use std::{fmt, error};
 use winapi::shared::minwindef::{
 	DWORD
 };
+use winapi::um::errhandlingapi::GetLastError;
 
 pub trait AsInner<T: ?Sized> {
 	/// Exposes a reference to the raw inner type.
@@ -88,7 +89,7 @@ impl ErrorCode {
 	///
 	/// See [GetLastError function](https://msdn.microsoft.com/en-us/library/windows/desktop/ms679360.aspx) for more information.
 	pub fn last() -> ErrorCode {
-		ErrorCode(200)
+		unsafe {ErrorCode(GetLastError())}
 	}
 }
 impl fmt::Display for ErrorCode {

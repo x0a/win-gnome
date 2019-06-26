@@ -5,4 +5,11 @@ authors = ["x0a <x0a.cake@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-winapi = { version = "0.3.7", features = ["winuser", "libloaderapi", "windowsx"] }
+winapi = { version = "0.3.7", features = [
+    "winuser", 
+    "libloaderapi",
+    "windowsx", 
+    "errhandlingapi", 
+    "synchapi", 
+    "winerror"
+]}
