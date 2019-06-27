@@ -7,15 +7,10 @@ use crate::winapi::um::winuser::{
 	WH_MOUSE_LL,MSLLHOOKSTRUCT
 };
 use crate::winapi::shared::minwindef::{
-	UINT, LPARAM, WPARAM
+	UINT, WPARAM
 };
 use crate::winapi::um::winuser::{
-	SetWindowsHookExW,
-	UnhookWindowsHookEx,
-	CallNextHookEx
-};
-use crate::winapi::um::winuser::{
-	WM_XBUTTONDOWN, WM_XBUTTONUP
+	SetWindowsHookExW
 };
 use super::{Context, Invoke, Hook};
 
