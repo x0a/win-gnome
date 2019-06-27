@@ -1,14 +1,15 @@
 #![windows_subsystem = "windows"]
 extern crate winapi;
 
-use std::ffi::CString;
 use std::ptr::null_mut;
+use std::thread::sleep;
+use std::time::Duration;
 
 use winapi::shared::windef::{HWND, RECT};
 use winapi::um::winuser::{
-    keybd_event, FindWindowExW, FindWindowW, GetClassNameA, GetDesktopWindow, GetForegroundWindow,
-    GetWindowRect, MessageBoxW, RegisterHotKey, ShowWindow, 
-    KEYEVENTF_KEYUP, MB_ICONEXCLAMATION, MB_OK, MOD_WIN, SW_HIDE, SW_SHOW, VK_ESCAPE, VK_LWIN, WM_MOUSEMOVE,
+    keybd_event, FindWindowExW, FindWindowW, GetDesktopWindow, GetForegroundWindow,
+    GetWindowRect, MessageBoxW, RegisterHotKey, ShowWindow, GetClassNameW, KEYEVENTF_KEYUP, MB_ICONEXCLAMATION,
+    MB_OK, MOD_WIN, SW_HIDE, SW_SHOW, VK_ESCAPE, VK_LWIN, WM_MOUSEMOVE
 };
 mod window;
 use window::win32_string;
@@ -76,8 +77,7 @@ struct Desktop {
 impl Desktop {
     unsafe fn new() -> Desktop {
         let g_desktop = GetDesktopWindow();
-        let window = Desktop::get_actual_desktop(g_desktop);
-        let (width, height) = Desktop::get_window_dimensions(g_desktop);
+        let (width, height, window) = Desktop::get_actual_desktop(g_desktop);
         let tray = Tray::new();
 
         return Desktop {
@@ -108,20 +108,37 @@ impl Desktop {
                 || fg == self.tray.start_menu;
         }
     }
-    pub unsafe fn get_actual_desktop(g_desktop: HWND) -> HWND {
-        let sibling = FindWindowExW(
-            g_desktop,
-            null_mut(),
-            win32_string("OleDdeWndClass").as_ptr(),
-            null_mut(),
-        );
-        let window = FindWindowExW(
-            g_desktop,
-            sibling,
-            win32_string("WorkerW").as_ptr(),
-            null_mut(),
-        );
-        return window;
+    pub unsafe fn get_actual_desktop(g_desktop: HWND) -> (i32, i32, HWND) {
+        let (width, height) = Desktop::get_window_dimensions(g_desktop);
+        let desktop_window = Desktop::find_matching_window(g_desktop, width, height, "WorkerW")
+            .or_else(|| Desktop::find_matching_window(g_desktop, width, height, "Progman"))
+            .expect("Could not find window");
+
+        return (width, height, desktop_window);
+    }
+    pub unsafe fn find_matching_window(
+        parent: HWND,
+        width: i32,
+        height: i32,
+        class_name: &str,
+    ) -> Option<HWND> {
+        let search = win32_string(class_name).as_ptr();
+        let mut desktop_window = FindWindowW(search, null_mut());
+
+        while !desktop_window.is_null() {
+            let (_width, _height) = Desktop::get_window_dimensions(desktop_window);
+            if _width == width && _height == height {
+                // found a window that matches resolution
+                break;
+            }
+            desktop_window = FindWindowExW(parent, desktop_window, search, null_mut());
+
+        }
+        if desktop_window.is_null() {
+            return None;
+        } else {
+            return Some(desktop_window);
+        }
     }
     unsafe fn open_start_menu(&self) {
         keybd_event(VK_LWIN as u8, 0, 0, 0);
@@ -130,7 +147,7 @@ impl Desktop {
 
     unsafe fn is_menu_open(&self) -> bool {
         let (_, b, _, _) = Desktop::get_window_pos(self.tray.tray_handle);
-        return b == self.height;
+        return b <= self.height + (self.tray.tray_height / 2); // still halfway shown
     }
     unsafe fn full_screen_program(&self) -> bool {
         let current = GetForegroundWindow();
@@ -162,15 +179,19 @@ impl Desktop {
     }
     unsafe fn _debug_cur_window(&self) {
         let current = GetForegroundWindow();
-        let class_name = CString::new(" ".repeat(255)).unwrap().into_raw();
-        let out = GetClassNameA(current, class_name, 255);
-        let class_name = CString::from_raw(class_name);
+        self._debug_window(current);
+    }
+    unsafe fn _debug_window(&self, window: HWND) {
+        let mut name_buffer:Vec<u16> = vec![0; 255];
 
-        let (w, h) = Desktop::get_window_dimensions(current);
+        let count = GetClassNameW(window, name_buffer.as_mut_ptr(), 255) as usize;
+        let class_name = String::from_utf16(&name_buffer[0..count]).unwrap();
+
+        let (w, h) = Desktop::get_window_dimensions(window);
         println!(
-            "className: '{}' {}, {}x{}",
-            class_name.to_str().unwrap(),
-            out,
+            "className: '{}' {:?}, {}x{}",
+            class_name,
+            window,
             w,
             h
         );
@@ -191,17 +212,34 @@ static mut desktop: Desktop = Desktop {
     },
 };
 
+static mut DELAY: bool = false;
+static mut LASTX: i32 = 0;
+static mut LASTY: i32 = 0;
+
+unsafe fn delay_further(ms: u64) {
+    DELAY = true;
+    std::thread::spawn(move || {
+        let dur = Duration::from_millis(ms);
+        sleep(dur);
+        DELAY = false;
+        mouse_move(LASTX, LASTY);
+    });
+}
+
 fn mouse_move(x: i32, y: i32) {
     unsafe {
-        if !desktop.enabled {
+        if !desktop.enabled || DELAY {
+            LASTX = x;
+            LASTY = y;
             return ();
         }
-        //desktop.debug_cur_window();
+        //desktop._debug_cur_window();
         if !desktop.tray.showing {
             if desktop.is_bottom_left(x, y) && !desktop.full_screen_program() {
                 desktop.tray.showing = true;
                 desktop.open_start_menu();
                 desktop.tray.show();
+                delay_further(300);
             }
         } else {
             if !desktop.is_tray_region(y) && !desktop.is_menu_open() {
@@ -216,7 +254,7 @@ fn mouse_move(x: i32, y: i32) {
 windows_hook! {
     pub fn mouse_hook(context: &mut MouseLL){
         if context.message() == WM_MOUSEMOVE{
-            mouse_move(context.pt_x(), context.pt_y());
+                mouse_move(context.pt_x(), context.pt_y());
         }
     }
 }
