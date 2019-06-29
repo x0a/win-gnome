@@ -65,14 +65,10 @@ pub fn my_callback() -> Result<external::hook::Hook, external::error::ErrorCode>
 Register the hook by simply calling the defined function and unwrapping it.
 !*/
 
-use std::{ptr, panic};
-use crate::winapi::um::winuser::{
-	SetWindowsHookExA,
-	UnhookWindowsHookEx,
-	CallNextHookEx
-};
-use crate::winapi::shared::windef::{HHOOK};
-use crate::winapi::shared::minwindef::{LPARAM, LRESULT, WPARAM};
+use crate::winapi::shared::minwindef::{DWORD, LPARAM, LRESULT, WPARAM};
+use crate::winapi::shared::windef::{HHOOK, HWINEVENTHOOK, HWND};
+use crate::winapi::um::winuser::{CallNextHookEx, UnhookWinEvent, UnhookWindowsHookEx};
+use std::{panic, ptr};
 
 /// Raw context for hook callbacks.
 ///
@@ -83,6 +79,18 @@ pub struct Context {
 	pub wParam: WPARAM,
 	pub lParam: LPARAM,
 	pub result: LRESULT,
+}
+
+#[allow(non_snake_case)]
+#[allow(dead_code)]
+pub struct WinContext {
+	dwEvent: u32,
+	dwEventThread: u32,
+	dwmsEventTime: u32,
+	idObject: i32,
+	idChild: i32,
+	hWinEventHook: u64,
+	hwnd: u64,
 }
 
 /// Thunks the system's `HOOKPROC`.
@@ -107,20 +115,110 @@ pub trait Invoke {
 			if let Ok(context) = result {
 				return if context.result != 0 {
 					context.result
-				}
-				else {
-					CallNextHookEx(ptr::null_mut(), context.code, context.wParam, context.lParam)
+				} else {
+					CallNextHookEx(
+						ptr::null_mut(),
+						context.code,
+						context.wParam,
+						context.lParam,
+					)
 				};
 			}
 		}
 		CallNextHookEx(ptr::null_mut(), code, wParam, lParam)
+	}
+
+}
+
+pub trait InvokeWin {
+	unsafe fn invoke(arg: &mut WinContext);
+	
+	#[allow(non_snake_case)]
+	unsafe extern "system" fn thunk(
+		hWinEventHook: HWINEVENTHOOK,
+		dwEvent: DWORD,
+		hwnd: HWND,
+		idObject: i32,
+		idChild: i32,
+		dwEventThread: DWORD,
+		dwmsEventTime: DWORD,
+	) {
+
+		let mut context = WinContext {
+			hWinEventHook: hWinEventHook as u64,
+			hwnd: hwnd as u64,
+			dwEvent,
+			idObject,
+			idChild,
+			dwEventThread,
+			dwmsEventTime,
+		};
+		Self::invoke(&mut context);
 	}
 }
 
 /// Setup a windows hook callback.
 ///
 /// See the [hook module](hook/index.html)'s documentation for more information.
+///
+
 #[macro_export]
+macro_rules! winevent_hook {
+	(@parse $prefix:tt [fn $name:ident($arg:ident: &mut FgWinEvent) $body:tt]) => {
+		winevent_hook!(@emit $prefix CallFg [fn $name($arg: &mut FgWinEvent) $body]);
+	};
+	(@parse $prefix:tt [fn $name:ident($arg:ident: &mut MouseCaptureEvent) $body:tt]) => {
+		winevent_hook!(@emit $prefix CallCapture [fn $name($arg: &mut MouseCaptureEvent) $body]);
+	};
+	(@parse $prefix:tt [fn $($tail:tt)*]) => {
+		env!("Unsupported argument fn: expected `&mut KeyboardLL` or `&mut MouseLL`. Check spelling?");
+	};
+	(@parse $prefix:tt [type $name:ident($arg:ident: &mut FgWinEvent) $body:tt]) => {
+		winevent_hook!(@emit $prefix CallFg [type $name($arg: &mut FgWinEvent) $body]);
+	};
+	(@parse $prefix:tt [type $name:ident($arg:ident: &mut MouseCaptureEvent) $body:tt]) => {
+		winevent_hook!(@emit $prefix CallCapture [type $name($arg: &mut MouseCaptureEvent) $body]);
+	};
+
+	(@parse [$($prefix:tt)*] [$head:tt $($tail:tt)*]) => {
+		winevent_hook!(@parse [$($prefix)* $head] [$($tail)*]);
+	};
+	// Emits the given name as a registration function.
+	(@emit [$($prefix:tt)*] $call:ident [fn $name:ident($arg:ident: &mut $ty:ident) $body:tt]) => {
+		$($prefix)*
+		fn $name() -> Result<$crate::hook::WinHook, $crate::errors::ErrorCode> {
+			winevent_hook!(@emit [] $call [type T($arg: &mut $ty) $body]);
+			T::register()
+		}
+	};
+
+	// Emits the given name as a registration type.
+	(@emit [$($prefix:tt)*] $call:ident [type $name:ident($arg:ident: &mut $ty:ident) $body:tt]) => {
+		$($prefix)*
+		enum $name {}
+		impl $crate::hook::InvokeWin for $name {
+			unsafe fn invoke(context: &mut $crate::hook::WinContext) {
+				<Self as $crate::hook::$call>::callback(std::mem::transmute(context));
+			}
+		}
+		impl $crate::hook::$call for $name {
+			fn callback($arg: &mut $crate::hook::$ty) $body
+		}
+		impl $name {
+			/// Registers the hook.
+			pub fn register() -> Result<$crate::hook::WinHook, $crate::errors::ErrorCode> {
+				<$name as $crate::hook::$call>::register()
+			}
+		}
+	};
+
+	//----------------------------------------------------------------
+	// Macro entry point
+
+	($($tail:tt)*) => {
+		winevent_hook!(@parse [] [$($tail)*]);
+	};
+}
 macro_rules! windows_hook {
 	//----------------------------------------------------------------
 	// Parser rules
@@ -133,9 +231,10 @@ macro_rules! windows_hook {
 	(@parse $prefix:tt [fn $name:ident($arg:ident: &mut MouseLL) $body:tt]) => {
 		windows_hook!(@emit $prefix CallMouseLL [fn $name($arg: &mut MouseLL) $body]);
 	};
+
 	// Match every other callback fn
 	(@parse $prefix:tt [fn $($tail:tt)*]) => {
-		env!("Unsupported argument fn: expected `&mut KeyboardLL` or `&mut MouseLL`. Check spelling?");
+		//env!("Unsupported argument fn: expected `&mut KeyboardLL` or `&mut MouseLL`. Check spelling?");
 	};
 
 	// Match the `KeyboardLL` callback type
@@ -209,6 +308,18 @@ impl Drop for Hook {
 		}
 	}
 }
+pub struct WinHook(HWINEVENTHOOK);
+impl Drop for WinHook {
+	fn drop(&mut self) {
+		unsafe {
+			UnhookWinEvent(self.0);
+		}
+	}
+}
 
 mod mouse_ll;
 pub use self::mouse_ll::*;
+mod fg_changed;
+pub use self::fg_changed::*;
+mod capture_mouse;
+pub use self::capture_mouse::*;
