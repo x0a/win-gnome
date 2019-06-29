@@ -7,9 +7,9 @@ use std::time::Duration;
 
 use winapi::shared::windef::{HWND, RECT};
 use winapi::um::winuser::{
-    keybd_event, FindWindowExW, FindWindowW, GetDesktopWindow, GetForegroundWindow,
-    GetWindowRect, MessageBoxW, RegisterHotKey, ShowWindow, GetClassNameW, KEYEVENTF_KEYUP, MB_ICONEXCLAMATION,
-    MB_OK, MOD_WIN, SW_HIDE, SW_SHOW, VK_ESCAPE, VK_LWIN, WM_MOUSEMOVE
+    keybd_event, FindWindowExW, FindWindowW, GetClassNameW, GetDesktopWindow, GetForegroundWindow,
+    GetWindowRect, MessageBoxW, RegisterHotKey, ShowWindow, KEYEVENTF_KEYUP, MB_ICONEXCLAMATION,
+    MB_OK, MOD_WIN, SW_HIDE, SW_SHOW, VK_ESCAPE, VK_LWIN, WM_MOUSEMOVE,
 };
 mod window;
 use window::win32_string;
@@ -29,16 +29,24 @@ struct Tray {
     showing: bool,
 }
 impl Tray {
-    fn new() -> Tray {
+    fn new(parent: HWND) -> Tray {
         let tray_class = win32_string("Shell_TrayWnd");
-        let start_menu_class = win32_string("Windows.UI.Core.CoreWindow");
         let overflow_class = win32_string("NotifyIconOverflowWindow");
 
         unsafe {
             let tray_handle = FindWindowW(tray_class.as_ptr(), null_mut());
-            let start_menu = FindWindowW(start_menu_class.as_ptr(), null_mut());
             let icon_overflow = FindWindowW(overflow_class.as_ptr(), null_mut());
             let (_, tray_height) = Desktop::get_window_dimensions(tray_handle);
+            let start_menu = Desktop::find_by_position(
+                parent,
+                "Windows.UI.Core.CoreWindow",
+                None,
+                None,
+                Some(Tray::get_menu_offset(tray_height)),
+                None,
+            )
+            .unwrap_or_else(|| null_mut());
+
 
             return Tray {
                 start_menu,
@@ -49,7 +57,12 @@ impl Tray {
             };
         }
     }
+    pub fn get_menu_offset(tray_height: i32) -> i32 {
+        // For some reason, GetWindowPos(Windows.UI.Core.CoreWindow).left is always tray_height + trayheight / 10 * 2
+        // So we use that to find the start menu
 
+        return tray_height + ((tray_height / 10) * 2);
+    }
     fn hide(&mut self) {
         unsafe {
             ShowWindow(self.tray_handle, SW_HIDE);
@@ -70,6 +83,7 @@ struct Desktop {
     height: i32,
     width: i32,
     enabled: bool,
+    last_window: HWND,
     window: HWND,
     tray: Tray,
 }
@@ -78,13 +92,14 @@ impl Desktop {
     unsafe fn new() -> Desktop {
         let g_desktop = GetDesktopWindow();
         let (width, height, window) = Desktop::get_actual_desktop(g_desktop);
-        let tray = Tray::new();
+        let tray = Tray::new(g_desktop);
 
         return Desktop {
             height,
             width,
             tray,
             window,
+            last_window: null_mut(),
             enabled: true,
         };
     }
@@ -110,17 +125,17 @@ impl Desktop {
     }
     pub unsafe fn get_actual_desktop(g_desktop: HWND) -> (i32, i32, HWND) {
         let (width, height) = Desktop::get_window_dimensions(g_desktop);
-        let desktop_window = Desktop::find_matching_window(g_desktop, width, height, "WorkerW")
-            .or_else(|| Desktop::find_matching_window(g_desktop, width, height, "Progman"))
+        let desktop_window = Desktop::find_by_dimensions(g_desktop, "WorkerW", width, height)
+            .or_else(|| Desktop::find_by_dimensions(g_desktop, "Progman", width, height))
             .expect("Could not find window");
 
         return (width, height, desktop_window);
     }
-    pub unsafe fn find_matching_window(
+    pub unsafe fn find_by_dimensions(
         parent: HWND,
+        class_name: &str,
         width: i32,
         height: i32,
-        class_name: &str,
     ) -> Option<HWND> {
         let search = win32_string(class_name).as_ptr();
         let mut desktop_window = FindWindowW(search, null_mut());
@@ -128,33 +143,77 @@ impl Desktop {
         while !desktop_window.is_null() {
             let (_width, _height) = Desktop::get_window_dimensions(desktop_window);
             if _width == width && _height == height {
-                // found a window that matches resolution
-                break;
+                return Some(desktop_window);
             }
             desktop_window = FindWindowExW(parent, desktop_window, search, null_mut());
 
         }
-        if desktop_window.is_null() {
-            return None;
-        } else {
-            return Some(desktop_window);
-        }
+        return None;
     }
+
+    pub unsafe fn find_by_position(
+        parent: HWND,
+        class_name: &str,
+        top: Option<i32>,
+        bottom: Option<i32>,
+        left: Option<i32>,
+        right: Option<i32>,
+    ) -> Option<HWND> {
+        let search = win32_string(class_name).as_ptr();
+        let mut desktop_window = FindWindowW(search, null_mut());
+
+        while !desktop_window.is_null() {
+            let (t, b, l, r) = Desktop::get_window_pos(desktop_window);
+            let top_match = match top {
+                Some(pos) => pos == t,
+                None => true,
+            };
+            let bottom_match = match bottom {
+                Some(pos) => pos == b,
+                None => true,
+            };
+
+            let left_match = match left {
+                Some(pos) => pos == l,
+                None => true,
+            };
+            let right_match = match right {
+                Some(pos) => pos == r,
+                None => true,
+            };
+
+            if top_match && bottom_match && left_match && right_match {
+                return Some(desktop_window);
+            }
+            desktop_window = FindWindowExW(parent, desktop_window, search, null_mut());
+
+        }
+        return None;
+    }
+
     unsafe fn open_start_menu(&self) {
         keybd_event(VK_LWIN as u8, 0, 0, 0);
         keybd_event(VK_LWIN as u8, 0, KEYEVENTF_KEYUP, 0);
     }
 
-    unsafe fn is_menu_open(&self) -> bool {
+    unsafe fn is_tray_open(&self) -> bool {
         let (_, b, _, _) = Desktop::get_window_pos(self.tray.tray_handle);
         return b <= self.height + (self.tray.tray_height / 2); // still halfway shown
     }
+    unsafe fn _is_menu_open(&self) -> bool {
+        let (width, height) = Desktop::get_window_dimensions(self.tray.start_menu);
+        let result = width == self.width; // && height != self.height;
+        println!(
+            "menu is open: {}, {}x{} {}x{}",
+            result, width, height, self.width, self.height
+        );
+        return result; // || right > self.width;
+    }
     unsafe fn full_screen_program(&self) -> bool {
-        let current = GetForegroundWindow();
-        if current == self.window {
+        if self.last_window == self.window {
             return false;
         }
-        let (top, bottom, left, right) = Desktop::get_window_pos(current);
+        let (top, bottom, left, right) = Desktop::get_window_pos(self.last_window);
         return top == 0 && left == 0 && bottom == self.height && right == self.width;
     }
 
@@ -181,20 +240,30 @@ impl Desktop {
         let current = GetForegroundWindow();
         self._debug_window(current);
     }
+    unsafe fn _get_class_name(&self, window: HWND) -> Option<String> {
+        let class_buffer: Vec<u16> = vec![0; 255];
+        let char_count = GetClassNameW(window, class_buffer.as_ptr(), 255) as usize;
+        if char_count != 0 {
+            return Some(
+                String::from_utf16(&class_buffer[0..char_count]).expect("Could not get classname"),
+            );
+        } else {
+            None
+        }
+    }
     unsafe fn _debug_window(&self, window: HWND) {
-        let mut name_buffer:Vec<u16> = vec![0; 255];
-
-        let count = GetClassNameW(window, name_buffer.as_mut_ptr(), 255) as usize;
-        let class_name = String::from_utf16(&name_buffer[0..count]).unwrap();
-
-        let (w, h) = Desktop::get_window_dimensions(window);
-        println!(
-            "className: '{}' {:?}, {}x{}",
-            class_name,
-            window,
-            w,
-            h
-        );
+        let class_name = self._get_class_name(window);
+        match class_name {
+            Some(name) => {
+                let (t, b, l, r) = Desktop::get_window_pos(window);
+                let (w, h) = Desktop::get_window_dimensions(window);
+                println!(
+                    "class: '{}' | handle: {:?} | {}x{} | top: {}, bottom: {}, left: {}, right: {}",
+                    name, window, w, h, t, b, l, r
+                );
+            }
+            None => println!("Couldn't get classname"),
+        }
     }
 }
 #[allow(non_upper_case_globals)]
@@ -202,6 +271,7 @@ static mut desktop: Desktop = Desktop {
     height: 0,
     width: 0,
     enabled: true,
+    last_window: null_mut(),
     window: null_mut(),
     tray: Tray {
         tray_handle: null_mut(),
@@ -236,14 +306,12 @@ fn mouse_move(x: i32, y: i32) {
         //desktop._debug_cur_window();
         if !desktop.tray.showing {
             if desktop.is_bottom_left(x, y) && !desktop.full_screen_program() {
-                desktop.tray.showing = true;
-                desktop.open_start_menu();
                 desktop.tray.show();
+                desktop.open_start_menu();
                 delay_further(300);
             }
         } else {
-            if !desktop.is_tray_region(y) && !desktop.is_menu_open() {
-                desktop.tray.showing = false;
+            if !desktop.is_tray_region(y) && !desktop.is_tray_open() {
                 desktop.tray.hide();
             }
         }
@@ -258,7 +326,25 @@ windows_hook! {
         }
     }
 }
-
+winevent_hook! {
+    pub fn fg_hook(context: &mut FgWinEvent){
+        let hwnd = context.get_hwnd();
+        unsafe{
+            desktop.last_window = hwnd;
+            if hwnd == desktop.tray.start_menu{
+                desktop.tray.show();
+            }
+            //desktop._debug_window(hwnd);
+        }
+    }
+}
+//winevent_hook! {
+//    pub fn mousecapture_hook(context: &mut MouseCaptureEvent){
+//        unsafe{
+//            desktop._debug_window(context.get_hwnd());
+//        }
+//    }
+//}
 fn main() {
     unsafe {
         if window::previous_instance(IDENTIFIER) {
@@ -284,11 +370,19 @@ fn main() {
             }
             return true;
         };
+        
+        let close_callback = || {
+            desktop.enabled = false;
+            desktop.tray.show();
+            return false;
+        };
 
-        let _hook = mouse_hook().unwrap();
+        let _mhook = mouse_hook().expect("Unable to install system-wide mouse hook");
+        let _fhook = fg_hook().expect("Unable to install system-side foreground hook");
+        //let _chook = mousecapture_hook().expect("Unable to install mouse capture hook");
 
         loop {
-            if !window::handle_message(&mut _window, &hotkey_callback) {
+            if !window::handle_message(&mut _window, &hotkey_callback, &close_callback) {
                 break;
             }
         }
