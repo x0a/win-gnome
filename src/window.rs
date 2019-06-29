@@ -13,7 +13,7 @@ use winapi::um::synchapi::CreateMutexW;
 use winapi::um::libloaderapi::GetModuleHandleW;
 use winapi::um::winuser::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW,TranslateMessage,GetMessageW,RegisterClassW,
-    CS_HREDRAW, CS_OWNDC, CS_VREDRAW, CW_USEDEFAULT, WM_HOTKEY, WNDCLASSW, MSG
+    CS_HREDRAW, CS_OWNDC, CS_VREDRAW, CW_USEDEFAULT, WM_HOTKEY, WM_CLOSE, WNDCLASSW, MSG
 };
 
 #[cfg(windows)]
@@ -82,7 +82,7 @@ pub fn create_hidden_window(identifier: &str) -> Result<Window, Error> {
 #[cfg(windows)]
 // Create message handling function with which to link to hook window to Windows messaging system
 // More info: https://msdn.microsoft.com/en-us/library/windows/desktop/ms644927(v=vs.85).aspx
-pub fn handle_message(window: &mut Window, on_hot_key: impl Fn() -> bool) -> bool {
+pub fn handle_message(window: &mut Window, on_hot_key: impl Fn() -> bool, on_close: impl Fn() -> bool) -> bool {
     unsafe {
         let mut message: MSG = mem::uninitialized();
 
@@ -92,6 +92,8 @@ pub fn handle_message(window: &mut Window, on_hot_key: impl Fn() -> bool) -> boo
             DispatchMessageW(&message as *const MSG); // Dispatch message with DispatchMessageW
             if message.message == WM_HOTKEY {
                 return on_hot_key();
+            } else if message.message == WM_CLOSE {
+                return on_close();
             }
             return true;
         } else {
