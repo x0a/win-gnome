@@ -13,7 +13,7 @@ use winapi::um::synchapi::CreateMutexW;
 use winapi::um::libloaderapi::GetModuleHandleW;
 use winapi::um::winuser::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW,TranslateMessage,GetMessageW,RegisterClassW,
-    CS_HREDRAW, CS_OWNDC, CS_VREDRAW, CW_USEDEFAULT, WM_HOTKEY, WM_CLOSE, WNDCLASSW, MSG
+    CW_USEDEFAULT, WM_HOTKEY, WM_CLOSE, WNDCLASSW, MSG
 };
 
 #[cfg(windows)]
@@ -39,7 +39,7 @@ pub fn create_hidden_window(identifier: &str) -> Result<Window, Error> {
 
         // Create "class" for window, using WNDCLASSW struct (different from Window our struct)
         let wnd_class = WNDCLASSW {
-            style: CS_OWNDC | CS_HREDRAW | CS_VREDRAW, // Style
+            style: 0, // Style
             lpfnWndProc: Some(DefWindowProcW), // The callbackfunction for any window event that can occur in our window!!! Here you could react to events like WM_SIZE or WM_QUIT.
             hInstance: hinstance, // The instance handle for our application which we can retrieve by calling GetModuleHandleW.
             lpszClassName: name.as_ptr(), // Our class name which needs to be a UTF-16 string (defined earlier before unsafe). as_ptr() (Rust's own function) returns a raw pointer to the slice's buffer
