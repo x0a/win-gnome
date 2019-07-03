@@ -2,7 +2,7 @@ use std::ptr::null_mut;
 use super::{WinContext, InvokeWin, WinHook};
 use winapi::um::winuser::{
 	SetWinEventHook, 
-    EVENT_SYSTEM_FOREGROUND, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, EVENT_SYSTEM_CAPTURESTART
+    EVENT_SYSTEM_FOREGROUND, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS
 };
 use winapi::shared::windef::HWND;
 use crate::errors::ErrorCode;
