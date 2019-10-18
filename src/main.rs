@@ -9,7 +9,7 @@ use winapi::um::winuser::{
     MessageBoxW, RegisterHotKey, MB_ICONEXCLAMATION, MB_OK, MOD_WIN, VK_ESCAPE, WM_MOUSEMOVE,
 };
 mod desktop;
-use desktop::{Desktop, Tray};
+use desktop::{Desktop, Tray, TrayOrientation};
 mod window;
 use window::win32_string;
 
@@ -23,23 +23,31 @@ static mut LASTX: i32 = 0;
 static mut LASTY: i32 = 0;
 
 enum CornerAction {
-    open_menu,
-    open_wintab,
+    StartMenu,
+    DesktopSelector,
 }
 
+#[allow(non_upper_case_globals)]
+static mut corner_action: CornerAction = CornerAction::StartMenu;
 #[allow(non_upper_case_globals)]
 static mut desktop: Desktop = Desktop {
     height: 0,
     width: 0,
     enabled: true,
     last_window: null_mut(),
-    window: null_mut(),
-    tray: Tray {
-        tray_handle: null_mut(),
+    shell_window: null_mut(),
+    shell_parent: null_mut(),
+    tray: Tray{
+        orientation: TrayOrientation::Bottom,
+        bar: null_mut(),
+        start_button: null_mut(),
         start_menu: null_mut(),
         icon_overflow: null_mut(),
-        tray_height: 0,
-        showing: false,
+        parent_width: 0,
+        parent_height: 0,
+        start_width: 0,
+        start_height: 0,
+        showing: true
     },
 };
 
@@ -64,10 +72,13 @@ fn mouse_move(x: i32, y: i32) {
         }
         //desktop._debug_cur_window();
         if !desktop.tray.showing {
-            if desktop.is_bottom_left(x, y) {
+            if desktop.tray.is_hot_corner(x, y) {
                 if !desktop.full_screen_program() {
                     desktop.tray.show();
-                    desktop.open_start_menu();
+                    match corner_action {
+                        CornerAction::StartMenu => desktop.open_start_menu(),
+                        CornerAction::DesktopSelector => desktop.open_desktop_selector(),
+                    }
                     delay_next(300);
                 } else if desktop.update_desktop() {
                     println!("Desktop handle was invalid. Got new one and trying again");
@@ -75,7 +86,7 @@ fn mouse_move(x: i32, y: i32) {
                 }
             }
         } else {
-            if !desktop.is_tray_region(y) && !desktop.is_tray_open() {
+            if !desktop.tray.is_tray(x, y) && !desktop.tray.is_tray_open() {
                 desktop.tray.hide();
             }
         }
@@ -95,7 +106,7 @@ winevent_hook! {
         let hwnd = context.get_hwnd();
         unsafe{
             desktop.last_window = hwnd;
-            if hwnd == desktop.tray.start_menu{
+            if desktop.tray.start_menu == hwnd{
                 desktop.tray.show();
             }
             desktop._debug_window(hwnd);
@@ -103,6 +114,28 @@ winevent_hook! {
     }
 }
 fn main() {
+    for (i, arg) in std::env::args().enumerate() {
+        if i == 0 {
+            continue;
+        }
+        if arg == "--selector" {
+            unsafe {
+                corner_action = CornerAction::DesktopSelector;
+            }
+        } else if arg == "--help" {
+            println!("WinGnome 0.1");
+            println!(
+                "\t--selector\tOpens Desktop selector on hot corner as opposed to opening menu"
+            );
+            return ();
+        } else {
+            println!(
+                "Invalid argument \"{}\". Use --help for a list of parameters.",
+                arg
+            );
+            return ();
+        }
+    }
     unsafe {
         if window::previous_instance(IDENTIFIER) {
             MessageBoxW(
