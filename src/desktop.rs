@@ -2,12 +2,10 @@ use crate::window::win32_string;
 use winapi::shared::windef::{HWND, RECT};
 use winapi::um::winuser::{
     keybd_event, FindWindowExW, FindWindowW, GetClassNameW, GetDesktopWindow, GetForegroundWindow,
-    GetWindowRect, ShowWindow, IsWindow, GetWindowLongW, GWL_EXSTYLE, GetParent,
-    KEYEVENTF_KEYUP, SW_HIDE, SW_SHOW, VK_LWIN, VK_TAB,
+    GetWindowRect, ShowWindow, IsWindow, GetWindowLongW, GetParent,
+    KEYEVENTF_KEYUP, SW_HIDE, SW_SHOW, VK_LWIN, VK_TAB, GWL_STYLE, WS_VISIBLE
 };
 use std::ptr::null_mut;
-
-
 #[allow(dead_code)]
 
 pub enum TrayOrientation {
@@ -23,6 +21,7 @@ pub struct Tray {
     pub start_menu: HWND,
     pub icon_overflow: HWND,
     pub showing: bool,
+    pub overflow_showing: bool,
     pub parent_width: i32,
     pub parent_height: i32,
     pub start_height: i32,
@@ -32,22 +31,18 @@ impl Tray {
     fn new(parent: HWND, parent_width: i32, parent_height: i32) -> Tray {
         let bar = Desktop::find_window(Some("Shell_TrayWnd"), None)
             .expect("Could not find window for system tray");
-        let start_button = Desktop::find_child(bar, "Start").expect("Could not find start button");
+        let start_button = Desktop::find_child(bar, "Start")
+            .expect("Could not find start button");
         let icon_overflow = Desktop::find_window(Some("NotifyIconOverflowWindow"), None)
             .unwrap_or_else(|| null_mut());
-        let (_, height) = Desktop::get_window_dimensions(bar);
+
+        let (start_width, start_height) = Desktop::get_window_dimensions(start_button);    
+        let orientation = Tray::get_orientation(parent_width, parent_height, Desktop::get_window_pos(bar));
         let start_menu = Desktop::find_by_position(
             parent,
             "Windows.UI.Core.CoreWindow",
-            None,
-            None,
-            Some(Tray::get_menu_offset(height)),
-            None,
-        )
-        .unwrap_or_else(|| null_mut());
-        let pos = Desktop::get_window_pos(bar);
-        let orientation = Tray::get_orientation(parent_width, parent_height, pos);
-        let (start_width, start_height) = Desktop::get_window_dimensions(start_button);
+            Tray::get_menu_offsets(start_width, parent_width, &orientation))
+            .expect("Unable to find start menu");
 
         return Tray {
             orientation,
@@ -60,6 +55,7 @@ impl Tray {
             start_width,
             start_height,
             showing: true,
+            overflow_showing: false
         };
     }
     pub fn default() -> Tray {
@@ -74,13 +70,17 @@ impl Tray {
             start_width: 0,
             start_height: 0,
             showing: true,
+            overflow_showing: false
         };
     }
-    pub fn get_menu_offset(tray_height: i32) -> i32 {
-        // GetWindowPos(Windows.UI.Core.CoreWindow).left is always tray_height + trayheight / 10 * 2
-        // So we use that to find the start menu
 
-        return tray_height + ((tray_height / 10) * 2);
+    pub fn get_menu_offsets(button_width: i32, parent_width: i32, orientation: &TrayOrientation) -> (Option<i32>, Option<i32>, Option<i32>, Option<i32>) {
+        return match orientation{
+            TrayOrientation::Bottom => (None, None, Some(button_width), None),
+            TrayOrientation::Top => (None, None, Some(button_width), None),
+            TrayOrientation::Left => (Some(0), None, Some(button_width), None),
+            TrayOrientation::Right => (Some(0), None, None, Some(parent_width - button_width))
+        };
     }
     pub fn is_tray_open(&self) -> bool {
         let (top, bottom, left, right) = Desktop::get_window_pos(self.bar);
@@ -91,7 +91,7 @@ impl Tray {
             TrayOrientation::Right => right == self.parent_width,
         };
     }
-    pub fn is_tray(&self, x: i32, y: i32) -> bool {
+    pub fn is_tray_region(&self, x: i32, y: i32) -> bool {
         return match self.orientation {
             TrayOrientation::Bottom => y > self.parent_height - self.start_height,
             TrayOrientation::Top => y < self.start_height,
@@ -101,19 +101,18 @@ impl Tray {
     }
     pub fn is_hot_corner(&self, x: i32, y: i32) -> bool {
         return match self.orientation {
-            TrayOrientation::Bottom => {
-                x < self.start_width && y > self.parent_height - self.start_height
-            }
+            TrayOrientation::Bottom => x < self.start_width && y > self.parent_height - self.start_height,
             TrayOrientation::Top => x < self.start_width && y < self.start_height,
             TrayOrientation::Left => x < self.start_width && y < self.start_height,
-            TrayOrientation::Right => {
-                x > self.parent_width - self.start_width && y < self.start_height
-            }
+            TrayOrientation::Right => x > self.parent_width - self.start_width && y < self.start_height
         };
     }
-    pub fn hide(&mut self) {
-        unsafe { ShowWindow(self.bar, SW_HIDE) };
+    pub fn hide(&mut self) -> bool {
+        if unsafe { ShowWindow(self.bar, SW_HIDE) != 0} {
+            return false;
+        }
         self.showing = false;
+        return true;
     }
     pub fn show(&mut self) {
         unsafe { ShowWindow(self.bar, SW_SHOW) };
@@ -179,9 +178,29 @@ impl Desktop {
         self.shell_window = shell_window;
         self.shell_parent = shell_parent;
         self.tray = tray;
+
         unsafe {
             self._debug_window(shell_window);
             self._debug_window(shell_parent);
+            self._debug_window(self.tray.bar);
+            self._debug_window(self.tray.start_menu);
+            self._debug_window(self.tray.start_button);
+        }
+    }
+    pub fn foreground_changed(&mut self, window: HWND){
+        self.last_window = window;
+        
+        if self.tray.start_menu == window{
+            self.tray.show();
+        } else if self.tray.icon_overflow == window {
+            self.tray.overflow_showing = true;
+        } else if self.tray.overflow_showing {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            let styles = unsafe { GetWindowLongW(self.tray.icon_overflow, GWL_STYLE) } as u32;
+            if styles & WS_VISIBLE == 0 {
+                self.tray.overflow_showing = false;
+            }
+
         }
     }
     pub fn toggle(&mut self) -> bool {
@@ -196,13 +215,11 @@ impl Desktop {
     }
     pub fn get_actual_desktop(top_desktop: HWND) -> (i32, i32, HWND, HWND) {
         let (width, height) = Desktop::get_window_dimensions(top_desktop);
-        let desktop_window = Desktop::find_by_dimensions(top_desktop, "WorkerW", width, height)
+        let shell_parent = Desktop::find_by_dimensions(top_desktop, "WorkerW", width, height)
             .or_else(|| Desktop::find_by_dimensions(top_desktop, "Progman", width, height))
             .expect("Could not find desktop window");
-
-        let shell_window =
-            Desktop::find_child(desktop_window, "SHELLDLL_DefView").expect("Couldn't find shell");
-        let shell_parent = unsafe { GetParent(shell_window) };
+        let shell_window = Desktop::find_child(shell_parent, "SHELLDLL_DefView")
+            .expect("Couldn't find shell");
 
         return (width, height, shell_window, shell_parent);
     }
@@ -227,6 +244,7 @@ impl Desktop {
     pub fn find_child(parent: HWND, class_name: &str) -> Option<HWND> {
         let search = win32_string(class_name).as_ptr();
         let child = unsafe { FindWindowExW(parent, null_mut(), search, null_mut()) };
+        
         if !child.is_null() {
             return Some(child);
         }
@@ -252,11 +270,10 @@ impl Desktop {
     pub fn find_by_position(
         parent: HWND,
         class_name: &str,
-        top: Option<i32>,
-        bottom: Option<i32>,
-        left: Option<i32>,
-        right: Option<i32>,
+        (top, bottom, left, right):
+        (Option<i32>, Option<i32>, Option<i32>, Option<i32>)
     ) -> Option<HWND> {
+
         let search = win32_string(class_name).as_ptr();
         let mut desktop_window = unsafe { FindWindowW(search, null_mut()) };
 
@@ -300,7 +317,7 @@ impl Desktop {
         keybd_event(VK_TAB as u8, 0, KEYEVENTF_KEYUP, 0);
         keybd_event(VK_LWIN as u8, 0, KEYEVENTF_KEYUP, 0);
     }
-    pub unsafe fn full_screen_program(&self) -> bool {
+    pub fn full_screen_program(&self) -> bool {
         if self.last_window == self.shell_parent || self.last_window == self.shell_window {
             return false;
         }
@@ -352,7 +369,7 @@ impl Desktop {
     }
     pub unsafe fn _debug_window(&self, window: HWND) {
         let class_name = self._get_class_name(window);
-        let extended_styles = GetWindowLongW(window, GWL_EXSTYLE);
+        let extended_styles = GetWindowLongW(window, GWL_STYLE);
         match class_name {
             Some(name) => {
                 let (t, b, l, r) = Desktop::get_window_pos(window);
