@@ -1,4 +1,4 @@
-//#![windows_subsystem = "windows"]
+#![windows_subsystem = "windows"]
 extern crate winapi;
 
 use std::ptr::null_mut;
@@ -47,7 +47,8 @@ static mut desktop: Desktop = Desktop {
         parent_height: 0,
         start_width: 0,
         start_height: 0,
-        showing: true
+        showing: true,
+        overflow_showing: false,
     },
 };
 
@@ -70,7 +71,7 @@ fn mouse_move(x: i32, y: i32) {
             LASTY = y;
             return ();
         }
-        //desktop._debug_cur_window();
+        // desktop._debug_window(desktop.tray.icon_overflow);
         if !desktop.tray.showing {
             if desktop.tray.is_hot_corner(x, y) {
                 if !desktop.full_screen_program() {
@@ -86,8 +87,14 @@ fn mouse_move(x: i32, y: i32) {
                 }
             }
         } else {
-            if !desktop.tray.is_tray(x, y) && !desktop.tray.is_tray_open() {
-                desktop.tray.hide();
+            if !desktop.tray.overflow_showing 
+                && !desktop.tray.is_tray_region(x, y) 
+                && !desktop.tray.is_tray_open() {
+                if !desktop.tray.hide(){
+                    if desktop.update_desktop() {
+                        println!("Desktop handle was invalid. Got new one and trying again");
+                    }
+                }
             }
         }
 
@@ -104,13 +111,11 @@ windows_hook! {
 winevent_hook! {
     pub fn fg_hook(context: &mut FgWinEvent){
         let hwnd = context.get_hwnd();
+        
         unsafe{
-            desktop.last_window = hwnd;
-            if desktop.tray.start_menu == hwnd{
-                desktop.tray.show();
-            }
-            desktop._debug_window(hwnd);
-        }
+            desktop.foreground_changed(hwnd);
+            desktop._debug_window(hwnd)
+        };
     }
 }
 fn main() {
