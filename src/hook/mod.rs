@@ -1,4 +1,4 @@
-/*!
+/*! Adapted from: https://github.com/CasualX/external/tree/master/src/hook
 Windows hooks.
 
 The most important thing to know is that the callbacks are context-less.

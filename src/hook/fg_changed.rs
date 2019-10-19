@@ -1,3 +1,7 @@
+/*
+    Adapted from: https://github.com/CasualX/external/tree/master/src/hook
+*/
+
 use std::ptr::null_mut;
 use super::{WinContext, InvokeWin, WinHook};
 use winapi::um::winuser::{
