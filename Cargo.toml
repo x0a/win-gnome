@@ -11,5 +11,11 @@ winapi = { version = "0.3.7", features = [
     "windowsx", 
     "errhandlingapi", 
     "synchapi", 
-    "winerror"
+    "winerror",
+    "dwmapi"
 ]}
+[profile.release]
+lto = true
+opt-level = 'z'  # Optimize for size.
+codegen-units = 1
+panic = 'abort'
