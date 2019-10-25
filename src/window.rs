@@ -82,7 +82,7 @@ pub fn create_hidden_window(identifier: &str) -> Result<Window, Error> {
 #[cfg(windows)]
 // Create message handling function with which to link to hook window to Windows messaging system
 // More info: https://msdn.microsoft.com/en-us/library/windows/desktop/ms644927(v=vs.85).aspx
-pub fn handle_message(window: &mut Window, on_hot_key: impl Fn() -> bool, on_close: impl Fn() -> bool) -> bool {
+pub fn handle_message(window: &Window, on_hot_key: impl Fn() -> bool, on_close: impl Fn() -> bool) -> bool {
     unsafe {
         let mut message: MSG = mem::uninitialized();
 

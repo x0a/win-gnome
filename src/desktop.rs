@@ -68,8 +68,8 @@ impl Tray {
             overflow_showing: false
         };
     }
-    pub fn default() -> Tray {
-        return Tray {
+    pub const fn default() -> Tray {
+        Tray {
             orientation: TrayOrientation::Bottom,
             bar: null_mut(),
             start_button: null_mut(),
@@ -84,7 +84,7 @@ impl Tray {
             showing: true,
             startmenu_showing: false,
             overflow_showing: false
-        };
+        }
     }
     fn apply_sensitivity(dimension: i32, sensitivity: i32) -> i32{
         let dimension = dimension as f32;
@@ -167,6 +167,7 @@ pub struct Desktop {
     pub last_window: HWND,
     pub shell_window: HWND,
     pub shell_parent: HWND,
+    pub hot_active: bool,
     pub tray: Tray,
 }
 
@@ -176,16 +177,17 @@ impl Desktop {
         desktop.refresh();
         return desktop;
     }
-    pub fn default() -> Desktop {
-        return Desktop {
+    pub const fn default() -> Desktop {
+        Desktop {
             height: 0,
             width: 0,
             enabled: true,
+            hot_active: true,
             last_window: null_mut(),
             shell_window: null_mut(),
             shell_parent: null_mut(),
             tray: Tray::default(),
-        };
+        }
     }
     pub fn refresh(&mut self) {
         let top_desktop = unsafe { GetDesktopWindow() };
@@ -197,6 +199,8 @@ impl Desktop {
         self.shell_window = shell_window;
         self.shell_parent = shell_parent;
         self.tray = tray;
+        self.hot_active = true;
+
         self.foreground_changed(unsafe { GetForegroundWindow() });
         /* unsafe {
             self._debug_window(shell_window);
@@ -242,6 +246,7 @@ impl Desktop {
     }
     pub fn toggle(&mut self) -> bool {
         self.enabled = !self.enabled;
+        self.hot_active = self.enabled;
         self.enabled
     }
 
@@ -357,12 +362,13 @@ impl Desktop {
     }
     pub fn full_screen_program(&self) -> bool {
         if self.last_window == self.shell_parent || self.last_window == self.shell_window {
-            return false;
+            false
+        } else {
+            let (top, bottom, left, right) = Desktop::get_window_pos(self.last_window);
+            top == 0 && left == 0 && bottom == self.height && right == self.width
         }
-        let (top, bottom, left, right) = Desktop::get_window_pos(self.last_window);
-        top == 0 && left == 0 && bottom == self.height && right == self.width
     }
-    pub unsafe fn update_desktop(&mut self) -> bool {
+    pub unsafe fn shell_changed(&mut self) -> bool {
         if IsWindow(self.shell_window) == 0 || GetParent(self.shell_window) != self.shell_parent {
             self.refresh();
             true

@@ -1,4 +1,4 @@
-#![windows_subsystem = "windows"]
+ #![windows_subsystem = "windows"]
 
 extern crate winapi;
 pub mod errors;
@@ -26,37 +26,21 @@ enum CornerAction {
     DesktopSelector,
 }
 
+#[derive(PartialEq)]
+enum TrayAction {
+    Hide,
+    NoHide
+}
+
 const IDENTIFIER: &str = "win_gnome";
 pub static mut SENSITIVITY: i32 = 100; // %
 static mut DELAY: bool = false;
 static mut LASTX: i32 = 0;
 static mut LASTY: i32 = 0;
 static mut CORNER_ACTION: CornerAction = CornerAction::StartMenu;
+static mut TRAY_ACTION: TrayAction = TrayAction::Hide;
 #[allow(non_upper_case_globals)]
-static mut desktop: Desktop = Desktop {
-    height: 0,
-    width: 0,
-    enabled: true,
-    last_window: null_mut(),
-    shell_window: null_mut(),
-    shell_parent: null_mut(),
-    tray: Tray{
-        orientation: TrayOrientation::Bottom,
-        bar: null_mut(),
-        start_button: null_mut(),
-        start_menu: null_mut(),
-        icon_overflow: null_mut(),
-        parent_width: 0,
-        parent_height: 0,
-        start_width: 0,
-        start_height: 0,
-        hot_width: 0,
-        hot_height: 0,
-        showing: true,
-        startmenu_showing: false,
-        overflow_showing: false,
-    },
-};
+static mut desktop: Desktop = Desktop::default();
 
 fn delay_next(ms: u64) {
     unsafe {
@@ -69,66 +53,83 @@ fn delay_next(ms: u64) {
     }
 }
 
-fn mouse_move(x: i32, y: i32) {
-    unsafe {
-        LASTX = x;
-        LASTY = y;
-        if !desktop.enabled || DELAY {
-            return ();
-        }
+unsafe fn on_hot_corner() {
+    if !desktop.full_screen_program() {
+        desktop.hot_active = false;
         
-        if !desktop.tray.showing {
-            if desktop.tray.is_hot_corner(x, y) {
-                if !desktop.full_screen_program() {
-                    desktop.tray.show();
-                    match CORNER_ACTION {
-                        CornerAction::StartMenu => desktop.open_start_menu(),
-                        CornerAction::DesktopSelector => desktop.open_desktop_selector(),
-                    }
-                    delay_next(300);
-                } else if desktop.update_desktop() {
-                    println!("Desktop handle was invalid. Got new one and trying again");
-                    mouse_move(x, y); // try again
-                }
-            }
-        } else {
-            if desktop.last_window != desktop.tray.start_menu 
-                // !desktop.tray.startmenu_showing // the problem is that sometimes the start menu takes a little while to close
-                // && !desktop.tray.overflow_showing 
-                && !desktop.tray.is_tray_region(x, y)
-                && !desktop.tray.is_tray_open() {
-                if !desktop.tray.hide(){
-                    if desktop.update_desktop() {
-                        println!("Desktop handle was invalid. Got new one and trying again");
-                    }
-                }
+        if TRAY_ACTION == TrayAction::Hide {
+            desktop.tray.show();
+        }
+        match CORNER_ACTION {
+            CornerAction::StartMenu => desktop.open_start_menu(),
+            CornerAction::DesktopSelector => desktop.open_desktop_selector(),
+        }
+        delay_next(300);
+    } else if desktop.shell_changed() { // full screen program && that full screen program might be new shell
+        println!("Desktop handle was invalid. Got new one and trying again");
+        on_hot_corner();
+    }
+}
+unsafe fn on_leaving_corner(force: bool){
+    if TRAY_ACTION == TrayAction::Hide {
+        if force || !desktop.tray.is_tray_open() {
+            if !desktop.tray.hide() && desktop.shell_changed() {
+                println!("Desktop handle was invalid. Got new one and trying again");
+                on_leaving_corner(force);
+            } else {
+                desktop.hot_active = true;
             }
         }
+    } else {
+        desktop.hot_active = true;
+    }
+}
+unsafe fn mouse_move(x: i32, y: i32) {
+    LASTX = x;
+    LASTY = y;
 
+    if DELAY {
+        return ();
     }
 
+    if desktop.hot_active {
+        if desktop.tray.is_hot_corner(x, y) {
+            on_hot_corner();
+        }
+    } else {
+        if desktop.last_window != desktop.tray.start_menu && !desktop.tray.is_tray_region(x, y) {
+            on_leaving_corner(false);
+        }
+    }
 }
+
 windows_hook! {
-    pub fn mouse_hook(context: &mut MouseLL){
-        if context.message() == WM_MOUSEMOVE{
-            mouse_move(context.pt_x(), context.pt_y());
+    pub fn mouse_hook(context: &mut MouseLL) {
+        if  unsafe{ !desktop.enabled } {
+            return ();
+        }
+
+        if context.message() == WM_MOUSEMOVE {
+            unsafe { mouse_move(context.pt_x(), context.pt_y()) };
         }
     }
 }
 winevent_hook! {
-    pub fn fg_hook(context: &mut FgWinEvent){
+    pub fn fg_hook(context: &mut FgWinEvent) {
         let hwnd = context.get_hwnd();
         
         unsafe{
             if desktop.foreground_changed(hwnd) && !desktop.tray.is_tray_region(LASTX, LASTY) {
-                desktop.tray.hide();
+                on_leaving_corner(true);
             } 
-            // desktop._debug_window(hwnd)
+            #[cfg(debug_assertions)]
+            desktop._debug_window(hwnd)
         };
     }
 }
-fn get_sensitivity(argument: String) -> Result<i32, &'static str>{
-    match argument.split("=").last().unwrap().to_string().parse::<i32>(){
+
+fn get_sensitivity(value: &str) -> Result<i32, &'static str>{
+    match value.parse::<i32>(){
         Ok(sensitivity) => if sensitivity > 0 && sensitivity <= 100 {
             Ok(sensitivity)
         } else {
@@ -137,47 +138,50 @@ fn get_sensitivity(argument: String) -> Result<i32, &'static str>{
         Err(_) => Err("Expected sensitivity=X, where X is 1-100")
     }
 }
+
+fn get_property(argument: &String) -> (String, String) {
+    let mut parts = argument.split("=");
+    (
+        match parts.next() {
+            Some(arg) => arg.to_string(),
+            None => "".to_string()
+        },
+        match parts.next() {
+            Some(arg) => arg.to_string(),
+            None => "".to_string()
+        }
+    )
+}
+
 fn main() {
-    /* thread::spawn(|| unsafe {
-        loop{
-            println!("Tray open cached: {}, real: {}", desktop.tray.showing, desktop.tray.is_tray_open());
-            println!("Tray region: {}", desktop.tray.is_tray_region(LASTX, LASTY));
-            println!("Startmenu open: {}", desktop.tray.startmenu_showing);
-            println!("Overflow open: {}", desktop.tray.overflow_showing);
-            println!("Last window: {:?}, start menu: {:?}, overflow: {:?}",
-                desktop.last_window, desktop.tray.start_menu, desktop.tray.icon_overflow);
-            std::thread::sleep(std::time::Duration::from_secs(5));
-        }
-    }); */
-    for (i, arg) in std::env::args().enumerate() {
-        if i == 0 {
-            continue;
-        }
-        if arg == "--selector" {
-            unsafe { CORNER_ACTION = CornerAction::DesktopSelector };
-        } else if arg.starts_with("--sensitivity") {
-            match get_sensitivity(arg){
+    for (index, (prop, value)) in std::env::args().map(|arg| get_property(&arg)).enumerate() {
+        match (index, &prop[..], &value[..]) {
+            (index, _, _) if index == 0 => continue,
+            (_, "--selector", _) => unsafe { CORNER_ACTION = CornerAction::DesktopSelector },
+            (_, "--no-hide", _) => unsafe { TRAY_ACTION = TrayAction::NoHide },
+            (_, "--sensitivity", sensitivity) => match get_sensitivity(sensitivity){
                 Ok(sensitivity) => unsafe { SENSITIVITY = sensitivity },
                 Err(error) => {
                     println!("Invalid sensitivity: {}", error);
                     return ();
                 }
+            },
+            (_, "--help", _) => {
+                println!("WinGnome 0.1");
+                println!(
+                    "\t--selector\tOpens Desktop selector on hot corner as opposed to opening menu\n\
+                     \t--sensitivity=X\tSpecifies size of hot corner as percent of start button, must be between 1-100\n\
+                     \t--no-hide\tDon't hide tray"
+                );
+                return ();
+            },
+            _ => {
+                println!("Invalid argument \"{}\": Use --help for a list of parameters.", prop);
+                return ();
             }
-        } else if arg == "--help" {
-            println!("WinGnome 0.1");
-            println!(
-                "\t--selector\tOpens Desktop selector on hot corner as opposed to opening menu\n\
-                \t--sensitivity=X\tSpecifies size of hot corner as percent of start button, must be between 1-100"
-            );
-            return ();
-        } else {
-            println!(
-                "Invalid argument \"{}\": Use --help for a list of parameters.",
-                arg
-            );
-            return ();
         }
     }
+
     unsafe {
         if window::previous_instance(IDENTIFIER) {
             MessageBoxW(
@@ -189,14 +193,17 @@ fn main() {
             return ();
         }
 
-        let mut _window = window::create_hidden_window(IDENTIFIER).unwrap();
+        let _window = window::create_hidden_window(IDENTIFIER).unwrap();
         desktop = Desktop::new();
 
         let hotkey_callback = || {
-            if !desktop.toggle() {
-                desktop.tray.show();
-            } else {
-                desktop.tray.hide();
+            let on = !desktop.toggle();
+            if TRAY_ACTION == TrayAction::Hide {
+                if on {
+                    desktop.tray.show();
+                } else {
+                    desktop.tray.hide();
+                }
             }
             true
         };
@@ -213,10 +220,12 @@ fn main() {
             .expect("Unable to install system-side foreground hook");
         RegisterHotKey(_window.handle, 0, MOD_WIN as u32, VK_ESCAPE as u32);
 
-        desktop.tray.hide();
+        if TRAY_ACTION == TrayAction::Hide {
+            desktop.tray.hide();
+        }
 
         loop {
-            if !window::handle_message(&mut _window, &hotkey_callback, &close_callback) {
+            if !window::handle_message(&_window, &hotkey_callback, &close_callback) {
                 break;
             }
         }
