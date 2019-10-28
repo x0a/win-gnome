@@ -1,4 +1,4 @@
- #![windows_subsystem = "windows"]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 extern crate winapi;
 pub mod errors;
@@ -18,7 +18,7 @@ static A: System = System;
 use winapi::um::winuser::{
     MessageBoxW, RegisterHotKey, MB_ICONEXCLAMATION, MB_OK, MOD_WIN, VK_ESCAPE, WM_MOUSEMOVE
 };
-use desktop::{Desktop, Tray, TrayOrientation};
+use desktop::Desktop;
 use window::win32_string;
 
 enum CornerAction {
@@ -139,7 +139,7 @@ fn get_sensitivity(value: &str) -> Result<i32, &'static str>{
     }
 }
 
-fn get_property(argument: &String) -> (String, String) {
+fn get_property(argument: String) -> (String, String) {
     let mut parts = argument.split("=");
     (
         match parts.next() {
@@ -154,7 +154,7 @@ fn get_property(argument: &String) -> (String, String) {
 }
 
 fn main() {
-    for (index, (prop, value)) in std::env::args().map(|arg| get_property(&arg)).enumerate() {
+    for (index, (prop, value)) in std::env::args().map(|arg| get_property(arg)).enumerate() {
         match (index, &prop[..], &value[..]) {
             (index, _, _) if index == 0 => continue,
             (_, "--selector", _) => unsafe { CORNER_ACTION = CornerAction::DesktopSelector },
@@ -194,7 +194,15 @@ fn main() {
         }
 
         let _window = window::create_hidden_window(IDENTIFIER).unwrap();
-        desktop = Desktop::new();
+        desktop = loop {
+            match Desktop::new() {
+                Ok(next_desktop) => break next_desktop,
+                Err(error) => {
+                    println!("Could not fetch desktop: {}\nTrying again in 1 second...", error);
+                    std::thread::sleep(Duration::from_secs(1));
+                }
+            }
+        };
 
         let hotkey_callback = || {
             let on = !desktop.toggle();

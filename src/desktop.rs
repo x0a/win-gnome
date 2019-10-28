@@ -33,11 +33,11 @@ pub struct Tray {
     pub hot_height: i32,
 }
 impl Tray {
-    fn new(parent: HWND, parent_width: i32, parent_height: i32) -> Tray {
+    fn new(parent: HWND, parent_width: i32, parent_height: i32) -> Result<Tray, &'static str> {
         let bar = Desktop::find_window(Some("Shell_TrayWnd"), None)
-            .expect("Could not find window for system tray");
+            .ok_or_else(|| "Could not find window for system tray")?;
         let start_button = Desktop::find_child(bar, "Start")
-            .expect("Could not find start button");
+            .ok_or_else(|| "Could not find start button")?;
         let icon_overflow = Desktop::find_window(Some("NotifyIconOverflowWindow"), None)
             .unwrap_or_else(|| null_mut());
 
@@ -50,8 +50,9 @@ impl Tray {
             parent,
             "Windows.UI.Core.CoreWindow",
             Tray::get_menu_offsets(start_width, parent_width, &orientation))
-            .expect("Unable to find start menu");
-        return Tray {
+            .ok_or_else(|| "Unable to find start menu")?;
+
+        return Ok(Tray {
             orientation,
             bar,
             start_button,
@@ -66,7 +67,7 @@ impl Tray {
             showing: true,
             startmenu_showing: false,
             overflow_showing: false
-        };
+        });
     }
     pub const fn default() -> Tray {
         Tray {
@@ -93,7 +94,7 @@ impl Tray {
     }
 
     pub fn get_menu_offsets(button_width: i32, parent_width: i32, orientation: &TrayOrientation) -> (Option<i32>, Option<i32>, Option<i32>, Option<i32>) {
-        match orientation{
+        match orientation {
             TrayOrientation::Bottom => (None, None, Some(button_width), None),
             TrayOrientation::Top => (None, None, Some(button_width), None),
             TrayOrientation::Left => (Some(0), None, Some(button_width), None),
@@ -172,10 +173,10 @@ pub struct Desktop {
 }
 
 impl Desktop {
-    pub fn new() -> Desktop {
+    pub fn new() -> Result<Desktop, &'static str> {
         let mut desktop = Desktop::default();
-        desktop.refresh();
-        return desktop;
+        desktop.refresh()?;
+        Ok(desktop)
     }
     pub const fn default() -> Desktop {
         Desktop {
@@ -189,10 +190,10 @@ impl Desktop {
             tray: Tray::default(),
         }
     }
-    pub fn refresh(&mut self) {
+    pub fn refresh(& mut self) -> Result<bool, &'static str> {
         let top_desktop = unsafe { GetDesktopWindow() };
-        let (width, height, shell_window, shell_parent) = Desktop::get_actual_desktop(top_desktop);
-        let tray = Tray::new(top_desktop, width, height);
+        let (width, height, shell_window, shell_parent) = Desktop::get_actual_desktop(top_desktop)?;
+        let tray = Tray::new(top_desktop, width, height)?;
 
         self.height = height;
         self.width = width;
@@ -202,13 +203,15 @@ impl Desktop {
         self.hot_active = true;
 
         self.foreground_changed(unsafe { GetForegroundWindow() });
-        /* unsafe {
+        #[cfg(debug_assertions)]
+        unsafe {
             self._debug_window(shell_window);
             self._debug_window(shell_parent);
             self._debug_window(self.tray.bar);
             self._debug_window(self.tray.start_menu);
             self._debug_window(self.tray.start_button);
-        } */
+        }
+        return Ok(true);
     }
     pub fn foreground_changed(&mut self, window: HWND) -> bool{
         self.last_window = window;
@@ -255,15 +258,15 @@ impl Desktop {
             || self.last_window == self.tray.bar
             || self.last_window == self.tray.start_menu
     }
-    pub fn get_actual_desktop(top_desktop: HWND) -> (i32, i32, HWND, HWND) {
+    pub fn get_actual_desktop(top_desktop: HWND) -> Result<(i32, i32, HWND, HWND), &'static str> {
         let (width, height) = Desktop::get_window_dimensions(top_desktop);
         let shell_parent = Desktop::find_by_dimensions(top_desktop, "WorkerW", width, height)
             .or_else(|| Desktop::find_by_dimensions(top_desktop, "Progman", width, height))
-            .expect("Could not find desktop window");
+            .ok_or_else(|| "Could not find desktop window")?;
         let shell_window = Desktop::find_child(shell_parent, "SHELLDLL_DefView")
-            .expect("Couldn't find shell");
+            .ok_or_else(|| "Could not find shell window")?;
 
-        (width, height, shell_window, shell_parent)
+        Ok((width, height, shell_window, shell_parent))
     }
     pub fn find_by_dimensions(
         parent: HWND,
