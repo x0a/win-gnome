@@ -35,7 +35,7 @@ $taskname = "WinGnome"
 Get-Process $targetname -Erroraction "silentlycontinue" -OutVariable process_exists >$null
 if($process_exists){
     Write-Host "Killing any currently running instance of win-gnome.exe..."
-    iex "taskkill /im win-gnome.exe" >$null
+    taskkill /im win-gnome.exe
 }
 Write-Host "Creating $destination"
 New-Item -ItemType Directory -Force -Path $destination >$null
