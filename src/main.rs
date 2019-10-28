@@ -40,7 +40,7 @@ static mut LASTY: i32 = 0;
 static mut CORNER_ACTION: CornerAction = CornerAction::StartMenu;
 static mut TRAY_ACTION: TrayAction = TrayAction::Hide;
 #[allow(non_upper_case_globals)]
-static mut desktop: Desktop = Desktop::default();
+pub static mut desktop: Desktop = Desktop::default();
 
 fn delay_next(ms: u64) {
     unsafe {
@@ -105,7 +105,7 @@ unsafe fn mouse_move(x: i32, y: i32) {
 
 windows_hook! {
     pub fn mouse_hook(context: &mut MouseLL) {
-        if  unsafe{ !desktop.enabled } {
+        if  unsafe { !desktop.enabled } {
             return ();
         }
 

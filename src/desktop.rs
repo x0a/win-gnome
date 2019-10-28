@@ -2,7 +2,7 @@ use crate::window::win32_string;
 use winapi::shared::windef::{HWND, RECT};
 use winapi::um::winuser::{
     keybd_event, FindWindowExW, FindWindowW, GetClassNameW, GetDesktopWindow, GetForegroundWindow,
-    GetWindowRect, ShowWindow, IsWindow, GetWindowLongW, GetParent, 
+    GetWindowRect, ShowWindow, IsWindow, GetWindowLongW, GetParent, GetWindowTextW,
     KEYEVENTF_KEYUP, SW_HIDE, SW_SHOW, VK_LWIN, VK_TAB, GWL_STYLE, GWL_EXSTYLE, WS_VISIBLE
 };
 use winapi::um::dwmapi::{DwmGetWindowAttribute, DwmFlush, DWMWA_CLOAKED};
@@ -46,10 +46,11 @@ impl Tray {
             Tray::apply_sensitivity(start_width,  unsafe{ super::SENSITIVITY }),
             Tray::apply_sensitivity(start_height,  unsafe{ super::SENSITIVITY }));
         let orientation = Tray::get_orientation(parent_width, parent_height, Desktop::get_window_pos(bar));
-        let start_menu = Desktop::find_by_position(
-            parent,
-            "Windows.UI.Core.CoreWindow",
-            Tray::get_menu_offsets(start_width, parent_width, &orientation))
+        let start_menu = Desktop::find_window(Some("Windows.UI.Core.CoreWindow"), Some("Cortana"))
+            .or_else(|| Desktop::find_by_position(
+                parent,
+                "Windows.UI.Core.CoreWindow",
+                Tray::get_menu_offsets(start_width, parent_width, &orientation)))
             .ok_or_else(|| "Unable to find start menu")?;
 
         return Ok(Tray {
@@ -325,7 +326,8 @@ impl Desktop {
 
         while !desktop_window.is_null() {
             let (t, b, l, r) = Desktop::get_window_pos(desktop_window);
-
+            #[cfg(debug_assertions)]
+            unsafe{ super::desktop._debug_window(desktop_window) };
             let top_match = match top {
                 Some(pos) => pos == t,
                 None => true,
@@ -414,8 +416,18 @@ impl Desktop {
             None
         }
     }
+    unsafe fn _get_title_name(&self, window:HWND) -> Option<String>{
+        let mut class_buffer: Vec<u16> = vec![0; 255];
+        let char_count = GetWindowTextW(window, class_buffer.as_mut_ptr(), 255) as usize;
+        if char_count != 0 {
+            String::from_utf16(&class_buffer[0..char_count]).ok()
+        } else {
+            None
+        }
+    }
     pub unsafe fn _debug_window(&self, window: HWND) {
         let class_name = self._get_class_name(window);
+        let title = self._get_title_name(window).unwrap_or("".to_owned());
         let extended_styles = GetWindowLongW(window, GWL_EXSTYLE);
         match class_name {
             Some(name) => {
@@ -429,8 +441,8 @@ impl Desktop {
                     print!("[WDESKHANDL: {:?}]", self.shell_parent);
                 }
                 println!(
-                    "class: '{}' | handle: {:?} | style: {} | {}x{} | top: {}, bottom: {}, left: {}, right: {}",
-                    name, window, extended_styles, w, h, t, b, l, r
+                    "class: '{}' | title: '{}' | handle: {:?} | style: {} | {}x{} | top: {}, bottom: {}, left: {}, right: {}",
+                    name, title, window, extended_styles, w, h, t, b, l, r
                 );
             }
             None => println!("Couldn't get classname"),
