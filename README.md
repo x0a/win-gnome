@@ -4,7 +4,7 @@ Hotcorner + hides taskbar when not active. Written in Rust. Replicates gnome-she
 * Hides taskbar when not in focus, and is meant to be used with auto-hide. The hot corner is not active while the taskbar is open. This is because in Windows 10, the entire taskbar acts like a hotcorner; is easy to accidentally activate and steals precious display space.
 
 # Installation & Removal
-1. Download `win-gnomev1.0.zip` at https://github.com/x0a/win-gnome/releases/tag/v1.0
+1. Download `win-gnome.zip` at https://github.com/x0a/win-gnome/releases
 2. Extract to directory
 3. Run install.ps1 with powershell
 
