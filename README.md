@@ -1,10 +1,13 @@
 # win-gnome
+
+<center><img src="https://i.imgur.com/jhKuohZ.gif"/></center>
+
 Hotcorner + hides taskbar when not active. Written in Rust. Replicates gnome-shell behavior for Windows 10, but with a few differences:
 * By default, the hot corner opens the **start menu and taskbar**, not the window selector. This is because my preference is for the search, as opposed to the window selector. To use the window selector instead, run with the `--selector` argument
 * Hides taskbar when not in focus, and is meant to be used with auto-hide. The hot corner is not active while the taskbar is open. This is because in Windows 10, the entire taskbar acts like a hotcorner; is easy to accidentally activate and steals precious display space.
 
 # Installation & Removal
-1. Download `win-gnomev1.0.zip` at https://github.com/x0a/win-gnome/releases/tag/v1.0
+1. Download `win-gnome.zip` at https://github.com/x0a/win-gnome/releases
 2. Extract to directory
 3. Run install.ps1 with powershell
 
