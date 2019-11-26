@@ -44,6 +44,7 @@ Copy-Item -Path $targetfinal -Destination $destination -Force
 $trigger = New-ScheduledTaskTrigger -AtLogOn # Specify the trigger settings
 $user = "$env:USERDOMAIN\$env:UserName" # Specify the account to run the script
 $action = New-ScheduledTaskAction -Execute $destfinal # Specify what program to run and with its parameters
+$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit 0
 $description = "Start WinGnome at login"
 
 Get-ScheduledTask -TaskName $taskname -ErrorAction SilentlyContinue -OutVariable task_exists > $null
@@ -53,7 +54,7 @@ if ($task_exists) {
 }
 
 Write-Host "Registering new '$taskname' scheduled task"
-Register-ScheduledTask -TaskName $taskname -Trigger $trigger -User $User -Action $action -Description $description -RunLevel Highest -Force >$null
+Register-ScheduledTask -TaskName $taskname -Trigger $trigger -User $User -Action $action -Description $description -RunLevel Highest -Settings $settings -Force >$null
 Write-Host "Starting '$taskname'"
 Start-ScheduledTask -TaskName $taskname
 
