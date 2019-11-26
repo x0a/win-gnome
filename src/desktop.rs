@@ -191,7 +191,7 @@ impl Desktop {
             tray: Tray::default(),
         }
     }
-    pub fn refresh(& mut self) -> Result<bool, &'static str> {
+    pub fn refresh(&mut self) -> Result<bool, &'static str> {
         let top_desktop = unsafe { GetDesktopWindow() };
         let (width, height, shell_window, shell_parent) = Desktop::get_actual_desktop(top_desktop)?;
         let tray = Tray::new(top_desktop, width, height)?;
@@ -262,7 +262,7 @@ impl Desktop {
     pub fn get_actual_desktop(top_desktop: HWND) -> Result<(i32, i32, HWND, HWND), &'static str> {
         let (width, height) = Desktop::get_window_dimensions(top_desktop);
         let shell_parent = Desktop::find_by_dimensions(top_desktop, "WorkerW", width, height)
-            .or_else(|| Desktop::find_by_dimensions(top_desktop, "Progman", width, height))
+            .or_else(|| Desktop::find_window(Some("Progman"), None))
             .ok_or_else(|| "Could not find desktop window")?;
         let shell_window = Desktop::find_child(shell_parent, "SHELLDLL_DefView")
             .ok_or_else(|| "Could not find shell window")?;
@@ -375,8 +375,13 @@ impl Desktop {
     }
     pub unsafe fn shell_changed(&mut self) -> bool {
         if IsWindow(self.shell_window) == 0 || GetParent(self.shell_window) != self.shell_parent {
-            self.refresh();
-            true
+            match self.refresh() {
+                Ok(_) => true,
+                Err(e) => {
+                    println!("Could not refresh window handles: {}", e);
+                    false
+                }
+            }
         } else {
             false
         }
@@ -387,19 +392,19 @@ impl Desktop {
         (right - left, bottom - top)
     }
     pub fn get_window_pos(handle: HWND) -> (i32, i32, i32, i32) {
-        let dimensions: *mut RECT = &mut RECT {
+        let mut dimensions = RECT {
             top: 0,
             left: 0,
             right: 0,
             bottom: 0,
         };
         unsafe {
-            GetWindowRect(handle, dimensions);
+            GetWindowRect(handle, &mut dimensions as *mut RECT);
             (
-                (*dimensions).top,
-                (*dimensions).bottom,
-                (*dimensions).left,
-                (*dimensions).right,
+                dimensions.top,
+                dimensions.bottom,
+                dimensions.left,
+                dimensions.right,
             )
         }
     }
@@ -429,6 +434,7 @@ impl Desktop {
         let class_name = self._get_class_name(window);
         let title = self._get_title_name(window).unwrap_or("".to_owned());
         let extended_styles = GetWindowLongW(window, GWL_EXSTYLE);
+        
         match class_name {
             Some(name) => {
                 let (t, b, l, r) = Desktop::get_window_pos(window);
