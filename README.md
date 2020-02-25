@@ -33,3 +33,11 @@ Right-click Taskbar -> Taskbar Settings -> Automatically hide the taskbar in des
 Start Menu -> "adjust performance" -> Uncheck "Fade or slide menus into view"
 
 Reduces delay between leaving the start menu and the taskbar being hidden.
+
+# Troubleshooting
+
+## Taskbar sometimes doesn't hide
+
+Seems to be a bug with Windows 10.
+
+Easy fix is to open a small program like Notepad from the Start Menu, you can close the program afterwards.
