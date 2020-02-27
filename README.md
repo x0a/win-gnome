@@ -1,6 +1,6 @@
 # win-gnome
 
-<center><img src="https://i.imgur.com/jhKuohZ.gif"/></center>
+Video demo: https://imgur.com/jhKuohZ
 
 Hotcorner + hides taskbar when not active. Written in Rust. Replicates gnome-shell behavior for Windows 10, but with a few differences:
 * By default, the hot corner opens the **start menu and taskbar**, not the window selector. This is because my preference is for the search, as opposed to the window selector. To use the window selector instead, run with the `--selector` argument
@@ -33,3 +33,11 @@ Right-click Taskbar -> Taskbar Settings -> Automatically hide the taskbar in des
 Start Menu -> "adjust performance" -> Uncheck "Fade or slide menus into view"
 
 Reduces delay between leaving the start menu and the taskbar being hidden.
+
+# Troubleshooting
+
+## Taskbar sometimes doesn't hide
+
+Seems to be a bug with Windows 10.
+
+Easy fix is to open a small program like Notepad from the Start Menu, you can close the program afterwards.
