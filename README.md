@@ -34,6 +34,18 @@ Start Menu -> "adjust performance" -> Uncheck "Fade or slide menus into view"
 
 Reduces delay between leaving the start menu and the taskbar being hidden.
 
+# Options
+
+## Sensitivity
+
+You can reduce the sensitivity as a percentage with the `sensitivity=x` argument. Example:
+
+```
+./win-gnome --sensitivity=50
+```
+
+This would reduce the sensitivity to 50% (50% smaller hitmarker from the start button's usual size)
+
 # Troubleshooting
 
 ## Taskbar sometimes doesn't hide
